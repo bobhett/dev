@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPX Elevation Profile Viewer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+        
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            background: #f8f9ff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 30px;
+        }
+        
+        .upload-area:hover {
+            background: #eef1ff;
+            border-color: #764ba2;
+        }
+        
+        .upload-area.dragover {
+            background: #e0e7ff;
+            border-color: #4f46e5;
+        }
+        
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+        
+        input[type="file"] {
+            display: none;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 28px;
+            font-weight: bold;
+        }
+        
+        .chart-container {
+            position: relative;
+            width: 2571px;
+            height: 198px;
+            margin-top: 30px;
+            overflow: hidden;
+        }
+        
+        #elevChart {
+            width: 2571px !important;
+            height: 198px !important;
+        }
+        
+        .error {
+            background: #fee;
+            border: 1px solid #fcc;
+            color: #c33;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        #stats, #chartContainer {
+            display: none;
+        }
+        
+        #hidden {display:none;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏔️ KML Elevation Profile Viewer</h1>
+        <p class="subtitle">Upload your KML file to visualize the elevation profile</p>
+        
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">📁</div>
+            <h3>Drop KML file here or click to browse</h3>
+            <p style="margin-top: 10px; color: #666;">Supported format: .kml</p>
+            <input type="file" id="fileInput" accept=".kml">
+        </div>
+        
+        <div>
+        Rescale to: <input id="rescale">
+        </div>
+        <div id="error"></div>
+        <div id="hidden">
+        <div id="stats" class="stats">
+            <div class="stat-card">
+                <div class="stat-label">Total Distance</div>
+                <div class="stat-value" id="distance">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Elevation Gain</div>
+                <div class="stat-value" id="elevGain">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Elevation Loss</div>
+                <div class="stat-value" id="elevLoss">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Max Elevation</div>
+                <div class="stat-value" id="maxElev">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Min Elevation</div>
+                <div class="stat-value" id="minElev">-</div>
+            </div>
+        </div>
+        </div>
+        <div id="chartContainer" class="chart-container">
+            <canvas id="elevChart"></canvas>
+        </div>
+    </div>
+    
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const errorDiv = document.getElementById('error');
+        const statsDiv = document.getElementById('stats');
+        const chartContainer = document.getElementById('chartContainer');
+        let chart = null;
+        
+        uploadArea.addEventListener('click', () => fileInput.click());
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) handleFile(file);
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) handleFile(file);
+        });
+        
+        function handleFile(file) {
+            errorDiv.innerHTML = '';
+            
+            if (!file.name.endsWith('.kml')) {
+                showError('Please select a valid KML file');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = (e) => parseKML(e.target.result);
+            reader.onerror = () => showError('Error reading file');
+            reader.readAsText(file);
+        }
+        
+        function parseKML(kmlText) {
+            try {
+                const parser = new DOMParser();
+                const xml = parser.parseFromString(kmlText, 'text/xml');
+                
+                // Look for coordinates in various KML structures
+                const coordinates = xml.querySelectorAll('coordinates');
+                
+                if (coordinates.length === 0) {
+                    showError('No coordinates found in KML file');
+                    return;
+                }
+                
+                const points = [];
+                let totalDistance = 0;
+                
+                // Parse coordinates from KML (format: lon,lat,elevation)
+                coordinates.forEach(coordNode => {
+                    const coordText = coordNode.textContent.trim();
+                    const coordPairs = coordText.split(/\s+/);
+                    
+                    coordPairs.forEach((pair, i) => {
+                        const parts = pair.split(',');
+                        if (parts.length >= 2) {
+                            const lon = parseFloat(parts[0]);
+                            const lat = parseFloat(parts[1]);
+                            const ele = parts.length >= 3 ? parseFloat(parts[2]) : 0;
+                            
+                            if (!isNaN(lon) && !isNaN(lat)) {
+                                if (points.length > 0) {
+                                    const prev = points[points.length - 1];
+                                    totalDistance += haversine(prev.lat, prev.lon, lat, lon);
+                                }
+                                
+                                points.push({ lat, lon, ele, dist: totalDistance });
+                            }
+                        }
+                    });
+                });
+                
+                if (points.length === 0) {
+                    showError('No valid track points found in KML file');
+                    return;
+                }
+                
+                displayElevationProfile(points);
+            } catch (error) {
+                showError('Error parsing KML file: ' + error.message);
+            }
+        }
+        
+        function haversine(lat1, lon1, lat2, lon2) {
+            const R = 6371; // km
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+        
+        function displayElevationProfile(points) {
+            let distances = points.map(p => p.dist * 0.621371); // Convert km to miles
+            if (document.getElementById('rescale').value.trim().length != 0) {
+              distances = distances.map(d => d * Number(document.getElementById('rescale').value.trim())/distances[distances.length-1]);
+            }
+            const elevations = points.map(p => p.ele * 3.28084); // Convert meters to feet
+            
+            let elevGain = 0;
+            let elevLoss = 0;
+            
+            for (let i = 1; i < elevations.length; i++) {
+                const diff = elevations[i] - elevations[i-1];
+                if (diff > 0) elevGain += diff;
+                else elevLoss += Math.abs(diff);
+            }
+            
+            const maxElev = Math.max(...elevations);
+            const minElev = Math.min(...elevations);
+            const totalDist = distances[distances.length - 1];
+            
+            const totalDistMiles = totalDist * 0.621371;
+            const elevGainFeet = elevGain * 3.28084;
+            const elevLossFeet = elevLoss * 3.28084;
+            const maxElevFeet = maxElev * 3.28084;
+            const minElevFeet = minElev * 3.28084;
+            
+            document.getElementById('distance').textContent = totalDistMiles.toFixed(2) + ' mi';
+            document.getElementById('elevGain').textContent = elevGainFeet.toFixed(0) + ' ft';
+            document.getElementById('elevLoss').textContent = elevLossFeet.toFixed(0) + ' ft';
+            document.getElementById('maxElev').textContent = maxElevFeet.toFixed(0) + ' ft';
+            document.getElementById('minElev').textContent = minElevFeet.toFixed(0) + ' ft';
+            
+            statsDiv.style.display = 'grid';
+            chartContainer.style.display = 'block';
+            
+            if (chart) chart.destroy();
+            
+            const ctx = document.getElementById('elevChart').getContext('2d');
+            
+            // Set canvas size explicitly
+            const canvas = document.getElementById('elevChart');
+            canvas.width = 2571;
+            canvas.height = 198;
+            
+            // Calculate interval for x-axis (ensure 10-11 ticks max)
+            const rawInterval = totalDist / 10;
+            let xInterval = Math.ceil(rawInterval * 2) / 2; // Round up to nearest 0.5
+            
+            // Keep increasing interval until we have 11 or fewer ticks
+            while (Math.ceil(totalDist / xInterval) > 10) {
+                xInterval += 0.5;
+            }
+            
+            const pointsList = distances.map((element, index) => {
+              return {
+                x: element,
+                y: elevations[index]
+              };
+            })
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: distances,
+                    datasets: [{
+                        label: 'Elevation (ft)',
+                        data: pointsList,
+                        borderColor: '#ff0000',
+                        backgroundColor: 'rgba(255, 0, 0, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        borderWidth: 3
+                    }]
+                },
+                options: {
+                    responsive: false,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: (items) => `Distance: ${parseFloat(items[0].label).toFixed(2)} mi`,
+                                label: (item) => `Elevation: ${item.formattedValue} ft`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: {
+                                display: false
+                            },
+                            min:0,
+                            max:distances[distances.length-1].toFixed(1),
+                            ticks: {
+                                maxRotation: 0,
+                                minRotation: 0,
+                                font: {
+                                    size: 18
+                                },
+                                callback: function(value) {
+                                    if (value != distances[distances.length-1].toFixed(1))
+                                      return value;
+                                    else
+                                      return '';
+                                },
+                                stepSize: null
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: false
+                            },
+                            ticks: {
+                                font: {
+                                    size: 18
+                                },
+                                callback: function(value) {
+                                    // Only show ticks that are multiples of 500
+                                    if (value % 500 === 0) {
+                                        return value;
+                                    }
+                                    return '';
+                                },
+                                stepSize: 500
+                            }
+                        }
+                    },
+                    layout: {
+                        padding: {
+                            left: 0,
+                            right: 0,
+                            top: 0,
+                            bottom: 0
+                        }
+                    }
+                }
+            });
+        }
+        /*
+                            ticks: {
+                                autoSkip: false,
+                                maxRotation: 0,
+                                minRotation: 0,
+                                font: {
+                                    size: 18
+                                },
+                                callback: function(val, i) {
+                                    console.log (val + " " + i);
+                                    return (val);
+                                    const distance = distances[i];
+                                    if (distance === undefined) return '';
+                                    const nextDist = distances[i+1];
+                                    
+                                    // determine next interval
+                                    const interval = Math.floor(distance / xInterval) * xInterval;
+                                    const nextInterval = Math.floor(nextDist / xInterval) * xInterval;
+                                    
+                                    //console.log(`${i} ${distance} ${nextDist} ${nextDist - distance} ${xInterval} ${interval} ${nextInterval}`);
+                                    // Only show if new interval
+                                    if (nextInterval && interval !== nextInterval) {
+                                        return nextInterval.toFixed(1);
+                                    }
+                                    return '';
+                                }
+                            },
+                            grid: {
+                                display: true,
+                                drawOnChartArea: true,
+                                drawTicks: true,
+                                color: function(context) {
+                                    const distance = distances[context.index];
+                                    if (distance === undefined) return 'rgba(0,0,0,0)';
+                                    const nextDist = distances[context.index+1];
+                                    
+                                    // determine next interval
+                                    const interval = Math.floor(distance / xInterval) * xInterval;
+                                    const nextInterval = Math.floor(nextDist / xInterval) * xInterval;
+                                    
+                                    // Only show if new interval
+                                    if (nextInterval && interval !== nextInterval) {
+                                        return 'rgba(0, 0, 0, 0.1)';
+                                    }
+                                    return 'rgba(0,0,0,0)';
+                                }
+                            }
+                        },
+                        */
+        function showError(message) {
+            errorDiv.innerHTML = `<div class="error">${message}</div>`;
+            statsDiv.style.display = 'none';
+            chartContainer.style.display = 'none';
+        }
+    </script>
+</body>
+</html>
